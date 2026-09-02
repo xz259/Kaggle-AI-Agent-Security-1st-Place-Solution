@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-gcg"
+version = "0.1.0"
+description = "Gradient-guided token proposals with authoritative GGUF/llama.cpp validation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+hf = [
+  "torch>=2.2",
+  "transformers>=4.45",
+  "accelerate>=0.34",
+]
+gguf = [
+  "llama-cpp-python==0.3.34",
+]
+test = [
+  "ruff>=0.6",
+]
+
+[project.scripts]
+hybrid-gcg = "hybrid_gcg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

@@ -1,0 +1,36 @@
+[model]
+gguf_path = "/absolute/path/to/model.gguf"
+hf_model = "/absolute/path/to/matching-hf-checkpoint"
+model_class = "AutoModelForCausalLM"
+dtype = "bfloat16"
+device_map = "auto"
+# attn_implementation = "sdpa"
+trust_remote_code = false
+n_ctx = 8192
+n_batch = 512
+n_ubatch = 512
+n_gpu_layers = -1
+verbose = false
+
+[task]
+prompt_file = "prompt.txt"
+hop1_template_file = "templates/hop1.txt"
+hop2_template_file = "templates/hop2.txt"
+target_eog = "<replace-with-one-model-eog-token>"
+max_hop1_tokens = 256
+add_bos = false
+
+[search]
+output_dir = "runs/demo"
+steps = 1
+candidate_budget = 32
+top_k = 64
+rank_temperature = 0.1
+full_recheck_count = 4
+vocab_chunk_size = 8192
+seed = 42
+stop_when_exact = true
+
+# Empty means every prompt token is mutable. To freeze selected tokens, provide
+# the exact zero-based indices that may change instead.
+mutable_positions = []
