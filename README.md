@@ -177,5 +177,4 @@ rules are described in [docs/method.md](docs/method.md).
 
 ## License
 
-A license has intentionally not been selected yet. Choose one before publishing
-the repository.
+Released under the [MIT License](LICENSE).
