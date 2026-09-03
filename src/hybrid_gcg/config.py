@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,14 @@ class TaskConfig:
 
 
 @dataclass(frozen=True)
+class RidgeConfig:
+    enabled: bool = False
+    minimum_observations: int = 256
+    regularization: float = 0.01
+    exploration_fraction: float = 0.25
+
+
+@dataclass(frozen=True)
 class SearchConfig:
     output_dir: Path
     steps: int = 20
@@ -46,6 +54,7 @@ class SearchConfig:
     seed: int = 42
     stop_when_exact: bool = True
     mutable_positions: tuple[int, ...] = ()
+    ridge: RidgeConfig = field(default_factory=RidgeConfig)
 
 
 @dataclass(frozen=True)
@@ -109,6 +118,15 @@ def load_config(path: str | Path) -> Config:
         add_bos=bool(task_raw.get("add_bos", False)),
     )
     mutable = tuple(int(value) for value in search_raw.get("mutable_positions", []))
+    ridge_raw = search_raw.get("ridge", {})
+    if not isinstance(ridge_raw, dict):
+        raise ValueError("[search.ridge] must be a table")
+    ridge = RidgeConfig(
+        enabled=bool(ridge_raw.get("enabled", False)),
+        minimum_observations=int(ridge_raw.get("minimum_observations", 256)),
+        regularization=float(ridge_raw.get("regularization", 0.01)),
+        exploration_fraction=float(ridge_raw.get("exploration_fraction", 0.25)),
+    )
     search = SearchConfig(
         output_dir=_resolve_path(base, str(search_raw.get("output_dir", "runs/demo"))),
         steps=int(search_raw.get("steps", 20)),
@@ -120,6 +138,7 @@ def load_config(path: str | Path) -> Config:
         seed=int(search_raw.get("seed", 42)),
         stop_when_exact=bool(search_raw.get("stop_when_exact", True)),
         mutable_positions=mutable,
+        ridge=ridge,
     )
     config = Config(source=source, model=model, task=task, search=search)
     validate_config(config)
@@ -141,3 +160,9 @@ def validate_config(config: Config) -> None:
         raise ValueError("rank_temperature must be positive")
     if config.search.vocab_chunk_size <= 0:
         raise ValueError("vocab_chunk_size must be positive")
+    if config.search.ridge.minimum_observations <= 0:
+        raise ValueError("ridge minimum_observations must be positive")
+    if config.search.ridge.regularization <= 0.0:
+        raise ValueError("ridge regularization must be positive")
+    if not 0.0 <= config.search.ridge.exploration_fraction < 1.0:
+        raise ValueError("ridge exploration_fraction must be in [0, 1)")

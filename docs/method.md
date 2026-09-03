@@ -73,6 +73,27 @@ P_\tau(r)=
 Coordinates are sampled uniformly after an initial coverage pass. Duplicate
 prompt tuples are excluded within and across resumed panels.
 
+## Optional GGUF-calibrated ridge reranking
+
+The BF16 ordering can transfer imperfectly to a quantized model. With
+`search.ridge.enabled = true`, the search uses an initial allocation of the
+same candidate budget to collect local GGUF labels for ordinary radius-1
+proposals. Each observation records the coordinate, gradient rank, HotFlip
+delta, GGUF target-NLL change, and GGUF hop-2 margin gain relative to the
+incumbent.
+
+Two ridge regressions are fit using the standardized HotFlip delta, normalized
+rank, their interaction, a squared-delta term, and coordinate-specific
+intercepts and slopes. One predicts NLL change and the other predicts margin
+gain. The search interleaves both predicted orderings while reserving a
+configurable fraction for the Faster-GCG rank sampler.
+
+This is a shortlist policy, not a surrogate acceptance rule. Every proposed
+candidate is still scored by the GGUF backend, and promotion still requires
+the clean full-context score plus exact teacher-forced and greedy hop-1 gates.
+The fit is deliberately local: observations persist across plateau panels but
+are cleared immediately after an accepted token replacement.
+
 ## Two GGUF scoring paths
 
 All candidates are first scored by llama.cpp while reusing the byte-identical
@@ -86,6 +107,6 @@ and greedy gates are also run from complete contexts.
 ## Deliberate omissions
 
 The presentation implementation omits multi-token moves, evolutionary prompt
-generation, distributed llama.cpp workers, competition parsers, and the later
-ridge-calibrated shortlist experiments. Keeping one authoritative radius-1 path
-makes the proposal/validation boundary easier to audit.
+generation, distributed llama.cpp workers, and competition parsers. Keeping one
+authoritative radius-1 path makes the proposal/validation boundary easier to
+audit.

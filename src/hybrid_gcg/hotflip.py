@@ -27,6 +27,7 @@ class Proposal:
     replacement_id: int
     gradient_rank: int
     predicted_delta: float
+    source: str = "gradient"
 
 
 def transformers_dtype_keyword(version: str) -> str:
@@ -73,6 +74,8 @@ def build_radius1_panel(
     temperature: float,
     rng: np.random.Generator,
     visited: set[str],
+    source: str = "gradient",
+    cover_coordinates: bool = True,
 ) -> list[Proposal]:
     if budget <= 0:
         raise ValueError("budget must be positive")
@@ -104,17 +107,21 @@ def build_radius1_panel(
                 predicted_delta=float(
                     rankings.predicted_deltas[position_index, rank]
                 ),
+                source=source,
             )
         )
         return True
 
     # Give every coordinate one opportunity before allocating the rest randomly.
-    for position_index in rng.permutation(len(positions)):
-        for rank in rng.choice(top_k, size=top_k, replace=False, p=probabilities):
-            if consider(int(position_index), int(rank)):
+    if cover_coordinates:
+        for position_index in rng.permutation(len(positions)):
+            for rank in rng.choice(
+                top_k, size=top_k, replace=False, p=probabilities
+            ):
+                if consider(int(position_index), int(rank)):
+                    break
+            if len(proposals) >= budget:
                 break
-        if len(proposals) >= budget:
-            break
 
     attempts = 0
     attempt_limit = max(10_000, budget * 50)

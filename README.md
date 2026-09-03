@@ -20,7 +20,7 @@ included. Bring your own prompt and matching upstream/GGUF model pair.
 flowchart LR
     A["llama.cpp bootstrap"] --> B["Freeze observed hop 1"]
     B --> C["BF16 HotFlip rankings"]
-    C --> D["Sample radius-1 edits"]
+    C --> D["Sample or ridge-rerank radius-1 edits"]
     D --> E["Cached-prefix GGUF shortlist"]
     E --> F["Full-context GGUF recheck"]
     F --> G{"Exact hop 1 preserved?"}
@@ -39,14 +39,15 @@ This release intentionally contains only:
 - automatic llama.cpp trajectory bootstrapping;
 - BF16 HotFlip proposal rankings;
 - the Faster-GCG power-law rank sampler;
+- optional GGUF-calibrated ridge reranking;
 - radius-1 coordinate search;
 - cached-prefix GGUF shortlisting;
 - full-context GGUF acceptance and exact hop-1 hard rejection;
 - persistent checkpoints and JSONL events.
 
 The larger research codebase also explored semantic evolution, alternative
-losses, ridge reranking, and multi-token moves. Those branches are not required
-to understand or run this demonstration.
+losses, and multi-token moves. Those branches are not required to understand or
+run this demonstration.
 
 ## Installation
 
@@ -149,6 +150,24 @@ hybrid-gcg search --config my_experiment/config.toml
 For a larger run, increase `steps`, `candidate_budget`, and `top_k` only after
 the smoke test reproduces the bootstrapped hop 1. Every panel is checkpointed;
 rerunning the same command resumes from `checkpoint.json`.
+
+To enable GGUF-calibrated reranking, add:
+
+```toml
+[search.ridge]
+enabled = true
+minimum_observations = 256
+regularization = 0.01
+exploration_fraction = 0.25
+```
+
+The first part of a panel collects GGUF labels from ordinary HotFlip proposals.
+Once enough labels are available, two local ridge models rerank unseen
+proposals by predicted target-NLL change and hop-2 margin gain. A reserved
+fraction is still sampled from the gradient-ranked lists. These observations
+are checkpointed while the incumbent is unchanged and cleared after an
+accepted edit; the regression never bypasses full-context GGUF rescoring or the
+exact hop-1 gate.
 
 The default objective is the first-hop-2-token margin
 

@@ -21,6 +21,7 @@ from .hotflip import (
 )
 from .llama_backend import LlamaBackend
 from .objectives import SequenceScore, TokenScore
+from .ridge import build_ridge_panel
 from .templates import TextTemplate, TokenBoundaryError
 from .trajectory import Trajectory
 
@@ -86,6 +87,7 @@ class SearchRunner:
         self.checkpoint_path = self.output_dir / "checkpoint.json"
         self.events_path = self.output_dir / "events.jsonl"
         self.result_path = self.output_dir / "result.json"
+        self.ridge_observations: list[dict[str, int | float | str]] = []
         self.fingerprint = self._fingerprint()
 
     def _validate_provenance(self) -> None:
@@ -133,6 +135,16 @@ class SearchRunner:
             "vocab_chunk_size": self.config.search.vocab_chunk_size,
             "seed": self.config.search.seed,
             "mutable_positions": self.mutable_positions,
+            "ridge": {
+                "enabled": self.config.search.ridge.enabled,
+                "minimum_observations": (
+                    self.config.search.ridge.minimum_observations
+                ),
+                "regularization": self.config.search.ridge.regularization,
+                "exploration_fraction": (
+                    self.config.search.ridge.exploration_fraction
+                ),
+            },
             "hop1_template": self.hop1_template.text,
             "hop2_template": self.hop2_template.text,
         }
@@ -161,6 +173,7 @@ class SearchRunner:
             "visited_prompt_hashes": sorted(visited),
             "rng_state": self.rng.bit_generator.state,
             "history": history,
+            "ridge_observations": self.ridge_observations,
         }
         self.checkpoint_path.write_text(
             json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
@@ -178,12 +191,76 @@ class SearchRunner:
                 "Checkpoint does not match this trajectory/configuration"
             )
         self.rng.bit_generator.state = payload["rng_state"]
+        self.ridge_observations = [
+            {
+                "position": int(row["position"]),
+                "replacement_id": int(row["replacement_id"]),
+                "gradient_rank": int(row["gradient_rank"]),
+                "predicted_delta": float(row["predicted_delta"]),
+                "loss_delta": float(row["loss_delta"]),
+                "margin_gain": float(row["margin_gain"]),
+                "source": str(row.get("source", "unknown")),
+            }
+            for row in payload.get("ridge_observations", [])
+        ]
         return (
             int(payload["next_step"]),
             tuple(map(int, payload["current_prompt_ids"])),
             set(map(str, payload["visited_prompt_hashes"])),
             list(payload.get("history", [])),
         )
+
+    def _materialize_proposals(
+        self,
+        current_ids: Sequence[int],
+        proposals: Sequence[Proposal],
+        visited: set[str],
+    ) -> list[Candidate]:
+        candidates: list[Candidate] = []
+        for proposal in proposals:
+            tokens = list(map(int, current_ids))
+            tokens[proposal.position] = proposal.replacement_id
+            visited.add(prompt_hash(tokens))
+            candidate = self._candidate(current_ids, proposal)
+            if candidate is not None:
+                candidates.append(candidate)
+        return candidates
+
+    def _score_cached_phase(
+        self,
+        incumbent: Candidate,
+        candidates: Sequence[Candidate],
+        *,
+        collect_observations: bool,
+    ) -> tuple[list[tuple[Candidate, TokenScore]], TokenScore | None]:
+        if not candidates:
+            return [], None
+        contexts = [candidate.hop2_context_ids for candidate in candidates]
+        if collect_observations:
+            contexts.insert(0, incumbent.hop2_context_ids)
+        scores = self.backend.score_next_panel(
+            contexts,
+            common_prefix_length=self.trajectory.hop2_prompt_span[0],
+            target_id=self.trajectory.target_eog_id,
+        )
+        control = scores[0] if collect_observations else None
+        candidate_scores = scores[1:] if collect_observations else scores
+        rows = list(zip(candidates, candidate_scores, strict=True))
+        if control is not None:
+            for candidate, score in rows:
+                proposal = candidate.proposal
+                self.ridge_observations.append(
+                    {
+                        "position": int(proposal.position),
+                        "replacement_id": int(proposal.replacement_id),
+                        "gradient_rank": int(proposal.gradient_rank),
+                        "predicted_delta": float(proposal.predicted_delta),
+                        "loss_delta": float(score.nll - control.nll),
+                        "margin_gain": float(score.margin - control.margin),
+                        "source": proposal.source,
+                    }
+                )
+        return rows, control
 
     def _candidate(
         self,
@@ -267,6 +344,10 @@ class SearchRunner:
                 "step": start_step,
                 "hop2": incumbent.as_dict(),
                 "mutable_count": len(self.mutable_positions),
+                "proposal_strategy": (
+                    "gguf_ridge" if self.config.search.ridge.enabled else "hotflip"
+                ),
+                "ridge_observation_count": len(self.ridge_observations),
             }
         )
         if incumbent.exact and self.config.search.stop_when_exact:
@@ -276,15 +357,127 @@ class SearchRunner:
             rankings = self.proposer.rank(
                 current_ids, self.trajectory, self.mutable_positions
             )
-            panel = build_radius1_panel(
-                current_ids,
-                rankings,
-                budget=self.config.search.candidate_budget,
-                temperature=self.config.search.rank_temperature,
-                rng=self.rng,
-                visited=visited,
-            )
-            if not panel:
+            observation_count_before = len(self.ridge_observations)
+            cached_rows: list[tuple[Candidate, TokenScore]] = []
+            phase_diagnostics: list[dict[str, Any]] = []
+            proposal_count = 0
+
+            def score_phase(
+                name: str,
+                proposals: Sequence[Proposal],
+                proposal_diagnostics: dict[str, Any],
+            ) -> None:
+                nonlocal proposal_count
+                proposal_count += len(proposals)
+                candidates = self._materialize_proposals(
+                    current_ids, proposals, visited
+                )
+                rows, control = self._score_cached_phase(
+                    incumbent_candidate,
+                    candidates,
+                    collect_observations=self.config.search.ridge.enabled,
+                )
+                cached_rows.extend(rows)
+                phase_diagnostics.append(
+                    {
+                        "name": name,
+                        "proposals": len(proposals),
+                        "tokenizer_valid": len(candidates),
+                        "cached_control": (
+                            control.as_dict() if control is not None else None
+                        ),
+                        "proposal": proposal_diagnostics,
+                    }
+                )
+
+            ridge = self.config.search.ridge
+            if ridge.enabled and len(self.ridge_observations) < (
+                ridge.minimum_observations
+            ):
+                calibration_budget = min(
+                    self.config.search.candidate_budget,
+                    max(
+                        len(self.mutable_positions),
+                        ridge.minimum_observations,
+                        int(
+                            round(
+                                self.config.search.candidate_budget
+                                * ridge.exploration_fraction
+                            )
+                        ),
+                    ),
+                )
+                calibration = build_radius1_panel(
+                    current_ids,
+                    rankings,
+                    budget=calibration_budget,
+                    temperature=self.config.search.rank_temperature,
+                    rng=self.rng,
+                    visited=visited,
+                    source="calibration",
+                )
+                score_phase(
+                    "calibration",
+                    calibration,
+                    {
+                        "strategy": "hotflip_calibration",
+                        "requested": calibration_budget,
+                    },
+                )
+                remaining_budget = (
+                    self.config.search.candidate_budget - len(calibration)
+                )
+                if remaining_budget > 0:
+                    regression_panel, regression_diagnostics = build_ridge_panel(
+                        current_ids,
+                        rankings,
+                        budget=remaining_budget,
+                        temperature=self.config.search.rank_temperature,
+                        rng=self.rng,
+                        visited=visited,
+                        observations=self.ridge_observations,
+                        exploration_fraction=0.0,
+                        regularization=ridge.regularization,
+                        minimum_observations=ridge.minimum_observations,
+                        cover_coordinates=False,
+                    )
+                    score_phase(
+                        "regression",
+                        regression_panel,
+                        regression_diagnostics,
+                    )
+            elif ridge.enabled:
+                regression_panel, regression_diagnostics = build_ridge_panel(
+                    current_ids,
+                    rankings,
+                    budget=self.config.search.candidate_budget,
+                    temperature=self.config.search.rank_temperature,
+                    rng=self.rng,
+                    visited=visited,
+                    observations=self.ridge_observations,
+                    exploration_fraction=ridge.exploration_fraction,
+                    regularization=ridge.regularization,
+                    minimum_observations=ridge.minimum_observations,
+                )
+                score_phase(
+                    "regression", regression_panel, regression_diagnostics
+                )
+            else:
+                panel = build_radius1_panel(
+                    current_ids,
+                    rankings,
+                    budget=self.config.search.candidate_budget,
+                    temperature=self.config.search.rank_temperature,
+                    rng=self.rng,
+                    visited=visited,
+                )
+                score_phase(
+                    "gradient",
+                    panel,
+                    {"strategy": "hotflip_rank_sampler"},
+                )
+
+            if proposal_count == 0:
                 self._event(
                     {
                         "event": "proposal_space_exhausted",
@@ -298,26 +491,23 @@ class SearchRunner:
                     history,
                     "proposal_space_exhausted",
                 )
-            candidates: list[Candidate] = []
-            for proposal in panel:
-                tokens = list(current_ids)
-                tokens[proposal.position] = proposal.replacement_id
-                visited.add(prompt_hash(tokens))
-                candidate = self._candidate(current_ids, proposal)
-                if candidate is not None:
-                    candidates.append(candidate)
-            if not candidates:
+            if not cached_rows:
                 event = {
                     "event": "panel",
                     "step": step,
                     "gradient_loss": rankings.loss,
                     "gradient_competitor_id": rankings.competitor_id,
-                    "proposals": len(panel),
+                    "proposals": proposal_count,
                     "tokenizer_valid": 0,
                     "full_rechecks": 0,
                     "hop1_valid_improvements": 0,
                     "accepted": False,
                     "incumbent_hop2": incumbent.as_dict(),
+                    "proposal_phases": phase_diagnostics,
+                    "ridge_observation_count_before": observation_count_before,
+                    "ridge_observation_count_after": len(
+                        self.ridge_observations
+                    ),
                 }
                 history.append(event)
                 self._event(event)
@@ -329,13 +519,8 @@ class SearchRunner:
                 )
                 continue
 
-            cached_scores = self.backend.score_next_panel(
-                [candidate.hop2_context_ids for candidate in candidates],
-                common_prefix_length=self.trajectory.hop2_prompt_span[0],
-                target_id=self.trajectory.target_eog_id,
-            )
             ranked = sorted(
-                zip(candidates, cached_scores),
+                cached_rows,
                 key=lambda row: row[1].margin,
                 reverse=True,
             )
@@ -367,17 +552,23 @@ class SearchRunner:
                 "step": step,
                 "gradient_loss": rankings.loss,
                 "gradient_competitor_id": rankings.competitor_id,
-                "proposals": len(panel),
-                "tokenizer_valid": len(candidates),
+                "proposals": proposal_count,
+                "tokenizer_valid": len(cached_rows),
                 "full_rechecks": len(shortlist),
                 "hop1_valid_improvements": len(valid),
                 "accepted": accepted is not None,
                 "incumbent_hop2": incumbent.as_dict(),
+                "proposal_phases": phase_diagnostics,
+                "ridge_observation_count_before": observation_count_before,
+                "ridge_observation_count_after_scoring": len(
+                    self.ridge_observations
+                ),
             }
             if accepted is not None:
                 old_margin = incumbent.margin
                 current_ids = accepted.candidate.prompt_ids
                 incumbent = accepted.full_hop2
+                incumbent_candidate = accepted.candidate
                 event["mutation"] = {
                     "position": accepted.candidate.proposal.position,
                     "replacement_id": accepted.candidate.proposal.replacement_id,
@@ -386,11 +577,16 @@ class SearchRunner:
                     ),
                     "gradient_rank": accepted.candidate.proposal.gradient_rank,
                     "predicted_delta": accepted.candidate.proposal.predicted_delta,
+                    "source": accepted.candidate.proposal.source,
                 }
                 event["margin_gain"] = incumbent.margin - old_margin
                 event["accepted_hop2"] = incumbent.as_dict()
                 event["hop1"] = accepted.hop1.as_dict()
                 event["prompt"] = accepted.candidate.prompt_text
+                self.ridge_observations = []
+            event["ridge_observation_count_retained"] = len(
+                self.ridge_observations
+            )
             history.append(event)
             self._event(event)
             self._save_checkpoint(
@@ -431,6 +627,10 @@ class SearchRunner:
             "hop2_greedy_ids": list(hop2_greedy.token_ids),
             "accepted_steps": sum(bool(row.get("accepted")) for row in history),
             "panels": len(history),
+            "proposal_strategy": (
+                "gguf_ridge" if self.config.search.ridge.enabled else "hotflip"
+            ),
+            "ridge_observation_count": len(self.ridge_observations),
         }
         self.result_path.write_text(
             json.dumps(result, indent=2, ensure_ascii=False) + "\n",

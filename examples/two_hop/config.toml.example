@@ -34,3 +34,12 @@ stop_when_exact = true
 # Empty means every prompt token is mutable. To freeze selected tokens, provide
 # the exact zero-based indices that may change instead.
 mutable_positions = []
+
+# Optional. This spends an initial part of the exact GGUF candidate budget on
+# local calibration, then reranks unseen HotFlip candidates with ridge models.
+# Acceptance still uses clean full-context GGUF scoring and exact hop-1 gates.
+[search.ridge]
+enabled = false
+minimum_observations = 256
+regularization = 0.01
+exploration_fraction = 0.25
