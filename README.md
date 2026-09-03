@@ -16,16 +16,31 @@ included. Bring your own prompt and matching upstream/GGUF model pair.
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A["llama.cpp bootstrap"] --> B["Freeze observed hop 1"]
-    B --> C["BF16 HotFlip rankings"]
-    C --> D["Sample or ridge-rerank radius-1 edits"]
-    D --> E["Cached-prefix GGUF shortlist"]
-    E --> F["Full-context GGUF recheck"]
-    F --> G{"Exact hop 1 preserved?"}
-    G -- No --> D
-    G -- Yes --> H["Accept and checkpoint"]
+```
+llama.cpp bootstrap
+        |
+        v
+Freeze observed hop 1
+        |
+        v
+BF16 HotFlip rankings
+        |
+        v
+Sample or ridge-rerank radius-1 edits <---+
+        |                                  |
+        v                                  |
+Cached-prefix GGUF shortlist               |
+        |                                  |
+        v                                  |
+Full-context GGUF recheck                  |
+        |                                  |
+        v                                  |
+Exact hop 1 preserved? -- no --------------+
+        |
+       yes
+        |
+        v
+Accept and checkpoint
 ```
 
 The cached-prefix path is only a shortlist mechanism. A mutation can be
