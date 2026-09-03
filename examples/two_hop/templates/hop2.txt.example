@@ -1,1 +1,1 @@
-<replace with the exact raw prefix>{{PROMPT}}<insert any fixed boundary>{{HOP1}}<insert the real tool result or second-hop generation boundary>
+<replace with the exact raw prefix>{{PROMPT}}<insert fixed boundary and the real post-tool history; use {{HOP1}} only if the runtime preserves sampled hop-1 text verbatim><insert the second-hop generation boundary>

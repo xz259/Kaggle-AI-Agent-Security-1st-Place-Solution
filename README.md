@@ -89,12 +89,17 @@ mv my_experiment/templates/hop2.txt.example my_experiment/templates/hop2.txt
 The templates operate on the exact raw text consumed by llama.cpp:
 
 - `{{PROMPT}}` is the user-controlled token span and must occur exactly once.
-- `{{HOP1}}` is the complete sampled hop-1 text, including its EOG token.
-- `{{HOP1_VISIBLE}}` excludes the terminal EOG token.
+- `{{HOP1}}`, when used, is the complete sampled hop-1 text, including its EOG
+  token.
+- `{{HOP1_VISIBLE}}`, when used, excludes the terminal EOG token.
 
 For an agent or tool-use application, the hop-2 template must reproduce the
 real post-tool context exactly. This small release uses a text-template adapter
-instead of bundling a competition-specific SDK.
+instead of bundling a competition-specific SDK. Some frameworks parse the
+sampled tool call and then render a canonical structured call into the next
+context. In that case, put that canonical post-tool history directly in the
+hop-2 template and omit `{{HOP1}}`; splicing in the sampled raw text would
+optimize a different trajectory.
 
 The prompt must tokenize as an independent span inside both templates. The
 bootstrap command fails rather than silently optimizing across a changed token

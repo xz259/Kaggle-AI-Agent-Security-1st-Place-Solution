@@ -2,10 +2,20 @@ import unittest
 
 import numpy as np
 
-from hybrid_gcg.hotflip import Rankings, build_radius1_panel, rank_probabilities
+from hybrid_gcg.hotflip import (
+    Rankings,
+    build_radius1_panel,
+    rank_probabilities,
+    transformers_dtype_keyword,
+)
 
 
 class HotFlipTests(unittest.TestCase):
+    def test_transformers_dtype_keyword_tracks_major_version(self) -> None:
+        self.assertEqual(transformers_dtype_keyword("4.57.1"), "torch_dtype")
+        self.assertEqual(transformers_dtype_keyword("5.0.0"), "dtype")
+        self.assertEqual(transformers_dtype_keyword("unknown"), "torch_dtype")
+
     def test_power_rank_distribution_is_normalized_and_biased(self) -> None:
         probabilities = rank_probabilities(256, 0.1)
         self.assertTrue(np.isclose(probabilities.sum(), 1.0))

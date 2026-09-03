@@ -31,6 +31,12 @@ Teacher forcing is followed by a free greedy decode. A proposal is rejected if
 either check differs from the bootstrapped token sequence. Hop 1 is therefore a
 hard constraint rather than a soft term that can be traded against hop 2.
 
+The hop-2 template must represent the context produced by the real framework,
+not merely a concatenation of raw generations. Tool runtimes often parse hop 1
+and re-render a canonical structured call before appending the tool result. The
+template can therefore embed fixed canonical history and omit `{{HOP1}}`; the
+only required placeholder is the exact mutable `{{PROMPT}}` span.
+
 ## Gradient proposals
 
 The GGUF does not expose gradients. A matching upstream Transformers checkpoint

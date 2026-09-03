@@ -29,6 +29,20 @@ class Proposal:
     predicted_delta: float
 
 
+def transformers_dtype_keyword(version: str) -> str:
+    """Return the non-deprecated model-loading dtype keyword.
+
+    Transformers 5 renamed ``torch_dtype`` to ``dtype``.  Retaining the older
+    keyword for Transformers 4 keeps the presentation package compatible with
+    its declared minimum version.
+    """
+    try:
+        major = int(version.split(".", 1)[0])
+    except (AttributeError, ValueError):
+        major = 4
+    return "dtype" if major >= 5 else "torch_dtype"
+
+
 def rank_probabilities(top_k: int, temperature: float) -> np.ndarray:
     """Power-law rank distribution used by Faster-GCG.
 
@@ -195,9 +209,9 @@ class HotFlipProposer:
             raise ValueError(f"Unknown torch dtype {config.dtype!r}")
         kwargs: dict[str, object] = {
             "device_map": config.device_map,
-            "torch_dtype": dtype,
             "trust_remote_code": config.trust_remote_code,
         }
+        kwargs[transformers_dtype_keyword(transformers.__version__)] = dtype
         if config.attn_implementation:
             kwargs["attn_implementation"] = config.attn_implementation
         self.model = model_class.from_pretrained(config.hf_model, **kwargs)
