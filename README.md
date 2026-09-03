@@ -209,11 +209,6 @@ For the competition narrative and motivation, see
 [docs/solution.md](docs/solution.md). The implementation details and acceptance
 rules are described in [docs/method.md](docs/method.md).
 
-## Contributors
-
-- [xz259](https://github.com/xz259) — competition solution, research, and project direction
-- Codex (OpenAI) — implementation, testing, and documentation support
-
 ## License
 
 Released under the [MIT License](LICENSE).
