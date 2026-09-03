@@ -133,9 +133,9 @@ This command:
 2. records all sampled token IDs, including the EOG token;
 3. constructs the configured hop-2 context;
 4. confirms that the requested hop-2 target is one GGUF token and is classified
-   as EOG by llama.cpp; and
+   as EOG by llama.cpp;
 5. records the llama.cpp version plus the GGUF filename, size, and vocabulary
-   size; and
+   size;
 6. writes `runs/demo/baseline.json`.
 
 Inspect the artifact without loading a model:
@@ -208,6 +208,11 @@ final prompt, margin, token IDs, and validation status.
 For the competition narrative and motivation, see
 [docs/solution.md](docs/solution.md). The implementation details and acceptance
 rules are described in [docs/method.md](docs/method.md).
+
+## Contributors
+
+- [xz259](https://github.com/xz259) — competition solution, research, and project direction
+- Codex (OpenAI) — implementation, testing, and documentation support
 
 ## License
 

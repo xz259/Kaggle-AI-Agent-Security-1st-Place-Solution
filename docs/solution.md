@@ -57,7 +57,7 @@ That turns the problem from prompt engineering into a fairly standard adversaria
 
 Here, the target was very specific: preserve the exact tool call on hop 1, then make the first token of hop 2 an EOG token.
 
-I used a loss of roughly the form
+I alternated between ordered target NLL and explicit logit-margin objectives. A representative combined loss was
 
 $$
 L(x)
@@ -73,12 +73,12 @@ L(x)
 }_{\text{hop-2 termination loss}}
 $$
 
-The first term keeps the hop-1 tool call correct. The second pushes the EOG logit above the strongest competing token at the beginning of hop 2.
+The first term keeps the hop-1 tool call correct. The second pushes the EOG logit above the strongest competing token at the beginning of hop 2. I also hard-rejected any edit that changed the exact greedy hop-1 output.
 
 The optimization loop was roughly:
 
 1. Use the gradient to rank promising token substitutions.
-2. Take the top 256 replacement tokens and construct around 1,024 candidate edits.
+2. Take the top 256 replacement tokens and construct roughly 512–2,048 candidate edits, depending on the stage.
 3. Evaluate them and greedily keep the best improvement.
 4. Repeat.
 
